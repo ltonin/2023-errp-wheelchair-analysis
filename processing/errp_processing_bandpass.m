@@ -1,6 +1,6 @@
 clearvars; clc;
 
-subject = 'd6';
+subject = 'e10';
 
 includepat  = {subject};
 excludepat  = {};
@@ -14,19 +14,23 @@ artifactrej       = 'none';
 spatialfilter     = 'car';
 savedir           = ['analysis/' artifactrej '/' spatialfilter '/bandpass/'];
 recompute         = true;
-eeg_channels      = {'FP1', 'FP2', 'FZ', 'FC5', 'FC1', 'FC2', 'FC6', 'C3', 'CZ', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P3',  'Pz',  'P4', ...
-                     'EOG', 'F1',  'F2', 'FC3', 'FCZ', 'FC4',  'C5',  'C1',  'C2',  'C6', 'CP3', 'CP4',  'P5',  'P1',  'P2',  'P6'};
+lbchannels        = {'FP1', 'FP2', 'FZ', 'FC5', 'FC1', 'FC2', 'FC6', 'C3', 'CZ', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P3',  'Pz',  'P4', ...
+                 'EOG', 'F1',  'F2', 'FC3', 'FCZ', 'FC4',  'C5',  'C1',  'C2',  'C6', 'CP3', 'CP4',  'P5',  'P1',  'P2',  'P6'};
+eogchannels       = {'EOG'};
+eogchannelidx     = find(ismember(lower(lbchannels), lower(eogchannels)));
+eegchannels       = setdiff(lbchannels, eogchannels, 'stable');
+eegchannelidx     = find(ismember(lower(lbchannels), lower(eegchannels)));
+
 
 %% Processing parameters
-nchannels          = length(eeg_channels);
-layout_channels    = 'eeg.antneuro.33.eog.errp_mi';
+nchannels          = length(eegchannels);
+layout_channels    = 'eeg.antneuro.32.noeog.errp_mi';
 montage_channels   = proc_get_montage(layout_channels);
 included_car_chans = {'FCz', 'Cz', 'Pz', 'FC1', 'FC2', 'C1', 'C2', 'CP1', 'CP2', 'P1', 'P2'};     % Included channels for CAR
-included_car_index = find(ismember(lower(eeg_channels), lower(included_car_chans)));
+included_car_index = find(ismember(lower(eegchannels), lower(included_car_chans)));
 laplacian_mask     = proc_laplacian_mask(montage_channels, nchannels);
 bands              = [2 8];
 filtorder          = 3;
-
 
 
 %% Get datafiles
@@ -61,7 +65,8 @@ for fId = 1:NumFiles
     disp('     |-Loading GDF data');
     try
         [s, h] = sload(cfullname);
-        s = s(:, 1:nchannels);
+        eeg = s(:, eegchannelidx);
+        eog = s(:, eogchannelidx);
     catch ME
         warning('[warning] - Cannot load filename. Skipping it.');
         warning(['[warning] - Error: ' ME.message]);
@@ -75,30 +80,26 @@ for fId = 1:NumFiles
     %% Processing data
     util_bdisp('[proc] + Processing the data');
 
-    % DC
-    disp('       |-Removing DC');
-    %s_dc = s - repmat(mean(s, 1), size(s, 1), 1);
-    s_dc = s;
-
     % Compute Spatial filter
     disp(['       |-Spatial filter: ' spatialfilter ' (' layout_channels ')']);
 
     switch(spatialfilter)
         case 'none'
-            s_filt = s_dc;
+            eeg_filt = eeg;
         case 'car'
-            %s_filt = proc_car(s_dc, 'included', included_car_index);
-            s_filt = proc_car(s_dc, 'excluded', 18);
+            eeg_filt = proc_car(eeg, 'included', included_car_index);
         case 'laplacian'
-            s_filt = s_dc*laplacian_mask;
+            eeg_filt = eeg*laplacian_mask;
         otherwise
             error(['Unknown spatial filter selected ' spatialfilter]);
     end
     
     % Compute bandpass filters
-    s_bp = filt_bp(s_filt, filtorder, bands, h.SampleRate);
+    eeg_bp = filt_bp(eeg_filt, filtorder, bands, h.SampleRate);
+    eog_bp = filt_bp(eog, filtorder, bands, h.SampleRate);
 
-    P = s_bp;
+    P = eeg_bp;
+    E = eog_bp;
     
     % Extracting events
     disp('       |-Extract events');
@@ -119,9 +120,9 @@ for fId = 1:NumFiles
     
     %% Create settings structure
     settings.data.filename          = cfullname;
-    settings.data.nsamples          = size(s, 1);
-    settings.data.nchannels         = size(s, 2);
-    settings.data.lchannels         = eeg_channels;
+    settings.data.nsamples          = size(eeg, 1);
+    settings.data.nchannels         = size(eeg, 2);
+    settings.data.lchannels         = eegchannels;
     settings.data.samplerate        = h.SampleRate;
     settings.artifact.name          = artifactrej;
     settings.spatial.laplacian      = laplacian_mask;
@@ -138,7 +139,7 @@ for fId = 1:NumFiles
     
     sfilename = fullfile(savedir, [pfilename '.mat']);
     util_bdisp(['[out] - Saving bandpass in: ' sfilename]);
-    save(sfilename, 'P', 'events', 'settings'); 
+    save(sfilename, 'P', 'E', 'events', 'settings'); 
 
     
 end

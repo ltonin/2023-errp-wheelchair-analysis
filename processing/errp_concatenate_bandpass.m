@@ -1,20 +1,23 @@
-function [F, events, labels, settings] = errp_concatenate_bandpass(files)
+function [F, E, events, labels, settings] = errp_concatenate_bandpass(files)
 
     %warning('off', 'backtrace');
-    numfiles = length(files);
+    nfiles = length(files);
     
     % Getting size info to allocate memory and speedup the concatenation
-    datasize   = get_data_size(files);
-    NumSamples = sum(datasize(1, :));
-    NumChans   = unique(datasize(2, :));
+    eegsize      = get_data_size(files, 'P');
+    eogsize      = get_data_size(files, 'E');
+    eegnsamples  = sum(eegsize(1, :));
+    eegnchannels = unique(eegsize(2, :));
+    eognchannels = unique(eogsize(2, :));
     
-    F  = nan(NumSamples, NumChans);
-    Rk = nan(NumSamples, 1);                    % Run
-    Pk = nan(NumSamples, 1);                    % Control
-    Dk = nan(NumSamples, 1);                    % Day
-    Wk = nan(NumSamples, 1);                    % Week
-    Nk = nan(NumSamples, 1);                    % Month
-    Sk = nan(NumSamples, 1);
+    F  = nan(eegnsamples, eegnchannels);
+    E  = nan(eegnsamples, eognchannels);
+    Rk = nan(eegnsamples, 1);                    % Run
+    Pk = nan(eegnsamples, 1);                    % Control
+    Dk = nan(eegnsamples, 1);                    % Day
+    Wk = nan(eegnsamples, 1);                    % Week
+    Nk = nan(eegnsamples, 1);                    % Month
+    Sk = nan(eegnsamples, 1);
     Dl = [];                                    % Day label
     
     settings = [];
@@ -30,15 +33,15 @@ function [F, events, labels, settings] = errp_concatenate_bandpass(files)
     currsubjId = 0;
     
     fileseek = 1;
-    for fId = 1:numfiles
+    for fId = 1:nfiles
     
         cfile = files{fId};
-        util_disp_progress(fId, numfiles, '        ');
+        util_disp_progress(fId, nfiles, '        ');
         cdata = load(cfile);
 
         % Get current position 
         cstart   = fileseek;
-        cstop    = cstart + datasize(1, fId) - 1;
+        cstop    = cstart + eegsize(1, fId) - 1;
         
         % Get subject
         if(strcmp(cdata.settings.info.subject, currsubj) == false)
@@ -89,6 +92,7 @@ function [F, events, labels, settings] = errp_concatenate_bandpass(files)
 
         % Concatenate data
         F(cstart:cstop, :) = cdata.P;
+        E(cstart:cstop, :) = cdata.E;
         
         % Save the current settings, remove number of sample and filename,
         % and compare it with the previous settings. If different, it
@@ -131,7 +135,7 @@ function [F, events, labels, settings] = errp_concatenate_bandpass(files)
    % warning('on', 'backtrace');
 end
 
-function dsizes = get_data_size(filepaths)
+function dsizes = get_data_size(filepaths, variable)
 
     nfiles = length(filepaths);
     ndimensions = 2;                            % samples x chans
@@ -140,7 +144,7 @@ function dsizes = get_data_size(filepaths)
     
     for fId = 1:nfiles
         cfilepath = filepaths{fId};
-        cinfo = whos('-file', cfilepath, 'P');
+        cinfo = whos('-file', cfilepath, variable);
         dsizes(:, fId) = cinfo.size;    
     end
 
