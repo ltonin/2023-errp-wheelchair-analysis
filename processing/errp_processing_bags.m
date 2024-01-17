@@ -1,14 +1,14 @@
 clearvars; clc;
 
-subject = 'e10';
+subject = 'd6';
 
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 depthlevel  = 2;
 
-rootpath    = '/mnt/data/Research/';
+rootpath    = '/mnt/data/Research';
 folder      = '2023_errp_wheelchair';
-bagpath     = [rootpath '/' folder '/'];
+bagpath     = [rootpath '/' folder ''];
 savedir     = 'analysis/bags/raw/';
 
 %% Processing parameters

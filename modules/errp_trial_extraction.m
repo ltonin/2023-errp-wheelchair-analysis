@@ -3,12 +3,16 @@ clearvars; clc;
 subject = 'd6';
 includepat  = {subject, 'discrete'};
 excludepat  = {};
-spatialfilter = 'laplacian';
+spatialfilter = 'car';
 artifactrej   = 'none'; % {'FORCe', 'none'}
 datapath      = ['analysis/' artifactrej '/' spatialfilter '/bandpass/'];
 
+bagSubPath    = 'bags/aligned';
+gdfSubPath    = [artifactrej '/' spatialfilter '/bandpass'];
 
-datafiles = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
+datafiles     = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
+bagfiles      = replace(datafiles, gdfSubPath, bagSubPath); 
+
 ndatafiles = length(datafiles);
 util_bdisp(['[io] - Found ' num2str(ndatafiles) ' data files with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') ')']);
 
@@ -23,13 +27,13 @@ NoReleaseLx = 4101;
 NoReleaseFx = 4102;
 NoReleaseRx = 4103;
 
-EpochTime      = [-0.5 2.0];
-
-
+EpochTime      = [-1.0 2.0];
 
 %% Importing data
 util_bdisp(['[io] - Importing ' num2str(ndatafiles) ' files from ' datapath ':']);
 [eeg, eog, events, labels, settings] = errp_concatenate_bandpass(datafiles);
+[pose, twist, cmdvel, bagevents, baglabels] = errp_concatenate_bag(bagfiles);
+
 nsamples  = size(eeg, 1);
 nchannels = size(eeg, 2);
 SampleRate = settings.data.samplerate;
@@ -43,6 +47,17 @@ evtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoRelease
 DUR = events.DUR(evtidx);
 TYP = events.TYP(evtidx);
 POS = events.POS(evtidx);
+
+bagevtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], bagevents.TYP);
+bagERR = bagevents.ERR(bagevtidx);
+bagTYP = bagevents.TYP(bagevtidx);
+bagPOS = bagevents.POS(bagevtidx);
+
+bagDEL = errp_compute_delay(twist.z, bagPOS);
+
+plot_delay(twist.z, POS, bagDEL)
+
+POS = POS + bagDEL;
 
 % Extract epochs
 disp(['     |-Extract epochs [' num2str(EpochTime(1)) ' ' num2str(EpochTime(2)) '] seconds']);

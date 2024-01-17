@@ -19,7 +19,6 @@ function alignment = errp_find_alignment(evtbag, evtgdf)
     if(isempty(start_idx) == false)
         alignment = evtbag.POS(start_idx) - evtgdf.POS(1);
     end
-
 end
 
 function index = get_event_index(eoi, elist)

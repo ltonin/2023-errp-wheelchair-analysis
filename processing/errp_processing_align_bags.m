@@ -1,6 +1,6 @@
 clearvars; clc;
 
-subject = 'e10';
+subject = 'd6';
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 bagpath     = 'analysis/bags/raw/';
@@ -32,7 +32,10 @@ for fId = 1:nfiles
     nsamples = h.NRec*h.SampleRate;
 
     util_bdisp('[proc] + Find alignment between gdf and bag files:');
+
     alignment = errp_find_alignment(bagdata.events, h.EVENT);
+    %alignment = errp_find_alignment_vel_angular(bagdata, bagdata.events, h.EVENT, prs);
+
     disp(['       | Alignment (samples): ' num2str(alignment)]);
     
     util_bdisp('[proc] + Align bag file for:');
