@@ -31,7 +31,7 @@ NoReleaseRx = 4103;
 EpochTime      = [-1.0 2.0];
 
 time_no_release = round(512 * 2.8);
-compensation = 3; % 1: delay on the user perception, 3 delay on the "almost peak"
+compensation = 1; % 1: delay on the user perception, 3 delay on the "almost peak", 4.05 "peak"
 
 %% Importing data
 util_bdisp(['[io] - Importing ' num2str(ndatafiles) ' files from ' datapath ':']);
