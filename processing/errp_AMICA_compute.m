@@ -1,32 +1,32 @@
 clearvars; clc;
 
-subject = 'e6';
+subject = 'e2';
 
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 depthlevel  = 2;
-
-rootpath    = '/mnt/data/Research/';
-folder      = '2023_errp_wheelchair';
-gdfpath     = [rootpath '/' folder '/'];
-
-artifactrej   = 'amica';
-spatialfilter = 'car';
-savedir       = ['analysis/' artifactrej '/' spatialfilter '/raw/'];
-lbchannels    = {'FP1', 'FP2', 'FZ', 'FC5', 'FC1', 'FC2', 'FC6', 'C3', 'CZ', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P3',  'Pz',  'P4', ...
-                 'EOG', 'F1',  'F2', 'FC3', 'FCZ', 'FC4',  'C5',  'C1',  'C2',  'C6', 'CP3', 'CP4',  'P5',  'P1',  'P2',  'P6'};
+chanlocspath  = 'chanlocs64.mat';
 
 %% Processing parameters
-eogchannel    = {'EOG'};
-eogchannelidx = find(ismember(lower(lbchannels), lower(eogchannel)));
-eegchannels   = setdiff(lbchannels, eogchannel, 'stable');
-eegchannelidx = find(ismember(lower(lbchannels), lower(eegchannels)));
+channels     = {'FP1', 'FP2', 'F1', 'FZ', 'F2', 'FC1', 'FCz', 'FC2', 'C1', 'CZ', 'C2', 'CP1', 'CP2'};
 
-amica_filterorder  = 4;
-amica_filterbands  = [2 80];
+datapath = ['analysis/amica/preprocessed/' num2str(length(channels)) '/'];
+savedir  = ['analysis/amica/components/' num2str(length(channels)) '/'];
+
+Stop         = 100;
+CommandLx    = 101;
+CommandFx    = 102;
+CommandRx    = 103;
+ErrorLx      = 5101;
+ErrorRx      = 5103;
+NoReleaseLx  = 4101;
+NoReleaseFx  = 4102;
+NoReleaseRx  = 4103;
+
+epoch        = [-0.5 2];
 
 %% Get datafiles
-files = util_getfile3(gdfpath, '.gdf', 'include', includepat, 'exclude', excludepat, 'level', depthlevel);
+files = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat, 'level', depthlevel);
 
 nfiles = length(files);
 if(nfiles > 0)
@@ -38,81 +38,150 @@ end
 %% Create directory
 util_mkdir(pwd, savedir);
 
-%% Get generic 64 channel locations
-load('chanlocs64.mat');
+%% Extract epochs
 
-%% Compute AMICA components for each file
+% eeglab structure
+amica = eeg_emptyset;
 
 for fId = 1:nfiles
 
     cfullname = files{fId};
     [cfilepath, cfilename, cfileext] = fileparts(cfullname);
     
-    util_bdisp(['[io] + Loading file ' num2str(fId) '/' num2str(nfiles)]);
-    disp(['     |-File: ' cfullname]);
-
     %% Loading data
-    disp('     |-Loading GDF data');
-    try
-        [s, h] = sload(cfullname);
-        s_eeg = s(:, eegchannelidx);
-        s_eog = s(:, eogchannelidx);
-    catch ME
-        warning('[warning] - Cannot load filename. Skipping it.');
-        warning(['[warning] - Error: ' ME.message]);
-        continue;
+    util_bdisp(['[io] + Loading file ' num2str(fId) '/' num2str(nfiles)]);
+    disp(['     |- File: ' cfullname]);
+    
+    data = load(cfullname);
+    
+    eeg        = data.eeg;
+    samplerate = data.settings.samplerate;
+    POS     = data.settings.events.POS;
+    TYP     = data.settings.events.TYP;
+
+    %% Analyzing events
+    BeginEvt = CommandFx;
+    EndEvt   = Stop;
+    util_bdisp('[proc] + Analyzing events');
+    
+%     % Extract begin and end events
+%     disp(['       |- Find begin (' num2str(BeginEvt) ') and end (' num2str(EndEvt) ') events']);
+%     evtidx = errp_util_extract_begin_end(TYP, BeginEvt, EndEvt);
+%     disp(['       |- Exclude events not within begin and end. Excluded events index: [' strjoin(compose('%g', setdiff(1:length(TYP), evtidx)), ' ') ']']);
+%     POS = POS(evtidx);
+%     TYP = TYP(evtidx);
+
+    % Removing events within refractory period to avoid overlap while computing AMICA
+    refractory = length(epoch(1):1/samplerate:epoch(2));
+    disp(['       |- Find events within the refractory period (' num2str(refractory/samplerate, '%3.2f') ' s)']);
+    rmevt_refractory = errp_util_events_refractory(POS, refractory);
+    
+    % Find the first event and last event consistent with the epoch
+    disp(['       |- Find events not consistent with epoch [' strjoin(compose('%g', floor(epoch*samplerate)), ' ') ']']);
+    firstevt    = find(POS > floor(abs(epoch(1)*samplerate)), 1, 'first');
+    lastevt     = find(POS < size(eeg, 1) - floor(abs(epoch(2)*samplerate)), 1, 'last');
+    rmevt_epoch = setdiff(1:length(TYP), firstevt:lastevt);
+    
+    rm_evtidx = union(rmevt_refractory, rmevt_epoch);
+    disp(['       |- Excluded events index: [' strjoin(compose('%g', rm_evtidx), ' ') ']']);
+    POS(rm_evtidx) = [];
+    TYP(rm_evtidx) = [];
+    
+    
+    %% Extract epochs
+    util_bdisp('[proc] + Extracting epochs');
+    disp(['       |- Epoch period: [' strjoin(compose('%g', epoch), ' ') '] s']);
+    
+    % Get command events
+    cmdidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], TYP);
+    cmdPOS = POS(cmdidx);
+    cmdTYP = TYP(cmdidx);
+
+    % Get stop events
+    stpidx = errp_util_get_event_type(Stop, TYP);
+    stpPOS = POS(stpidx);
+    
+    % Exclude epoch when a stop command occurs in epoch(2) seconds after the command
+    excludedidx = find(sum(cmdPOS - stpPOS' > -epoch(2)*samplerate & cmdPOS - stpPOS' < 0, 2));
+    cmdPOS(excludedidx) = [];
+    cmdTYP(excludedidx) = [];
+    disp(['       |- Excluding epochs with stop command within ' num2str(epoch(2)) ' s: ' strjoin(compose('%g', excludedidx), ', ')]);
+    
+    % Extract epochs (already in eeglab format)
+    nepochs   = length(cmdPOS);
+    nsamples  = length(epoch(1):1/samplerate:epoch(2));
+    nchannels = size(eeg, 2);
+    epochs = nan(nchannels, nsamples, nepochs);
+    for eId = 1:nepochs
+        cstart = cmdPOS(eId) + floor(epoch(1)*samplerate);
+        cstop  = cmdPOS(eId) + floor(epoch(2)*samplerate);
+        epochs(:, :, eId) = eeg(cstart:cstop, :)';
     end
-    
-    %% Processing data
-    util_bdisp('[proc] + Processing the data');
 
-    % Compute spatial filter
-    disp(['       |-Spatial filter: ' spatialfilter]);
-
-    switch(spatialfilter)
-        case 'none'
-            s_eeg_filt = s_eeg;
-        case 'car'           
-            s_eeg_filt = proc_car(s_eeg);
-        otherwise
-            error(['Unknown spatial filter selected ' spatialfilter]);
-    end
-    
-    % Compute bandpass filters
-    disp(['       |-Bandpass filter order ' num2str(amica_filterorder) ': [' num2str(amica_filterbands(1)) ' ' num2str(amica_filterbands(2)) '] Hz']);
-    s_eeg_bp = filt_bp(s_eeg_filt, amica_filterorder, amica_filterbands, h.SampleRate);
-    s_eog_bp = filt_bp(s_eog, amica_filterorder, amica_filterbands, h.SampleRate);
-
-    
-    %% Compute AMICA
-    util_bdisp('[proc] + Computing AMICA');
-    eeg          = eeg_emptyset;
-    eeg.srate    = h.SampleRate;
-    eeg.data     = s_eeg_bp';
-    eeg.chanlocs = errp_util_get_chanlocs(eegchannels, chanlocs);
-    eog          = s_eog_bp;
-
-    amicadrk = getrank(eeg.data);
-    disp(['       |-Suggested rank: ' num2str(amicadrk)]);
-
-    % AMICA arguments
-    amica_arglist;
-    arglist(4)  = {size(eeg.data, 1)};       % nchannels
-    arglist(6)  = {amicadrk};               % PCA keep 
-    arglist(8)  = {8};                       % Max number of threads
-    arglist(12) = {1};                       % Number of processes
-    
-    % Run AMICA
-    [W,S,mods] = runamica15(eeg.data(:,:), arglist{:});
-    eeg.icaweights = W;
-    eeg.icasphere  = S(1:size(W,1),:);
-    eeg.icawinv    = mods.A(:,:,1);
-
-    % Check coherence of data structure
-    eeg = eeg_checkset(eeg, 'ica');
-    
-    % Save AMICA components
-    sfilename = fullfile(savedir, [cfilename '.mat']);
-    util_bdisp(['[out] - Saving AMICA components in: ' sfilename]);
-    save(sfilename, 'eeg', 'eog', 'h'); 
+    % Concatenating epochs between files
+    util_bdisp('[proc] + Concatenating epochs in eeg structure');
+    amica.data = cat(3, amica.data, epochs);
 end
+
+%% Checking eeg structure
+% Update eeg structure fields
+util_bdisp('[proc] + Updating eeg structure fields');
+disp(['       |- ''eeg.srate'': ' num2str(samplerate)]);
+amica.srate    = samplerate;
+disp(['       |- ''eeg.nbchan'': ' num2str(size(amica.data, 1))]);
+amica.nbchan   = size(amica.data, 1);
+disp(['       |- ''eeg.trials'': ' num2str(size(amica.data, 3))]);
+amica.trials   = size(amica.data, 3);
+disp(['       |- ''eeg.pnts'': ' num2str(size(amica.data, 2))]);
+amica.pnts     = size(amica.data, 2);
+disp(['       |- ''eeg.xmin'': ' num2str(epoch(1))]);
+amica.xmin     = epoch(1);
+disp(['       |- ''eeg.xmax'': ' num2str(epoch(2))]);
+amica.xmax     = epoch(2);
+disp(['       |- ''eeg.chanlocs'' extracted from: ''' which(chanlocspath)'']);
+chanlocstr   = load('chanlocs64.mat');
+amica.chanlocs = errp_util_get_chanlocs(channels, chanlocstr.chanlocs);
+
+% Checking consistency eeg structure
+util_bdisp('[proc] + Checking consistency eeg structure');
+amica = eeg_checkset(amica);
+
+%% Compute AMICA
+util_bdisp('[amica] + Computing AMICA');
+
+% Reshape data to concatenate trials
+data = reshape(amica.data, [], size(amica.data, 2)*size(amica.data, 3));
+disp(['        |- Reshaping the data from ' strjoin(compose('%g', size(amica.data)), 'x') ' to ' strjoin(compose('%g', size(data)), 'x')]);
+amicadrk = getrank(data);
+disp(['        |- Getting the rank: ' num2str(amicadrk)]);
+
+% AMICA arguments
+disp('        |+ AMICA parameters:');
+amica_arglist;
+arglist(4)  = {size(data, 1)};       % nchannels
+arglist(6)  = {amicadrk};            % PCA keep 
+arglist(8)  = {8};                   % Max number of threads
+arglist(12) = {1};                   % Number of processes
+for i = 1:2:length(arglist)
+    disp(['         |- ''' arglist{i} ''': ' num2str(arglist{i+1})])
+end
+
+[W,S,mods] = runamica15(data, arglist{:});
+amica.icaweights = W;
+amica.icasphere  = S(1:size(W,1),:);
+amica.icawinv    = mods.A(:,:,1);
+
+% Check coherence of data structure
+amica = eeg_checkset(amica, 'ica');
+
+%% Save AMICA components
+info = errp_util_get_info(files{1});
+sfilename = fullfile(savedir, [info.subject '.' info.date '.' info.task '.' info.extra1 '.' info.extra2 '.amica.mat']);
+util_bdisp(['[out] - Saving AMICA components in: ' sfilename]);
+save(sfilename, 'amica'); 
+
+
+
+
+
+

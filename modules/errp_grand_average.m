@@ -5,14 +5,16 @@ includepat  = {subject, 'discrete'};
 excludepat  = {};
 spatialfilter = 'car';
 artifactrej   = 'none'; % {'FORCe', 'none'}
+
+with_delay    = true;
+
+eegchannels   = {'FP1', 'FP2', 'F1', 'FZ', 'F2', 'FC1', 'FCz', 'FC2', 'C1', 'CZ', 'C2', 'CP1', 'CP2'};
+
 datapath      = ['analysis/' artifactrej '/' spatialfilter '/bandpass/'];
 bagspath      = 'analysis/bags/aligned/';
 
-bagSubPath    = 'bags/aligned';
-gdfSubPath    = [artifactrej '/' spatialfilter '/bandpass'];
-
-datafiles     = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
-bagfiles      = replace(datafiles, gdfSubPath, bagSubPath); 
+datafiles = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
+bagsfiles = util_getfile3(bagspath, '.mat', 'include', includepat, 'exclude', excludepat);
 
 ndatafiles = length(datafiles);
 util_bdisp(['[io] - Found ' num2str(ndatafiles) ' data files with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') ')']);
@@ -28,32 +30,68 @@ NoReleaseLx = 4101;
 NoReleaseFx = 4102;
 NoReleaseRx = 4103;
 
-EpochTime      = [-1.0 2.0];
-
-time_no_release = round(512 * 2.8);
-compensation = 1; % 1: delay on the user perception, 3 delay on the "almost peak", 4.05 "peak"
+epoch = [-1 2];
 
 %% Importing data
 util_bdisp(['[io] - Importing ' num2str(ndatafiles) ' files from ' datapath ':']);
 [eeg, eog, events, labels, settings] = errp_concatenate_bandpass(datafiles);
-[pose, twist, cmdvel, bagevents, baglabels] = errp_concatenate_bag(bagfiles);
+[pose, twist, cmdvel, bagevents, baglabels] = errp_concatenate_bags(bagsfiles);
 
-nsamples  = size(eeg, 1);
-nchannels = size(eeg, 2);
-SampleRate = settings.data.samplerate;
+nchannels  = size(eeg, 2);
+samplerate = settings.samplerate;
+eTYP       = events.TYP;
+ePOS       = events.POS;
+bTYP       = bagevents.TYP;
+bPOS       = bagevents.POS;
+
+%% Analyze events
+util_bdisp('[proc] + Analysizing events:');
+% Removing events within refractory period to avoid overlap while computing AMICA
+refractory = length(epoch(1):1/samplerate:epoch(2));
+disp(['       |- Find events within the refractory period (' num2str(refractory/samplerate, '%3.2f') ' s)']);
+rmevt_refractory = errp_util_events_refractory(ePOS, refractory);
+
+% Find the first event and last event consistent with the epoch
+disp(['       |- Find events not consistent with epoch [' strjoin(compose('%g', floor(epoch*samplerate)), ' ') ']']);
+firstevt    = find(ePOS > floor(abs(epoch(1)*samplerate)), 1, 'first');
+lastevt     = find(ePOS < size(eeg, 1) - floor(abs(epoch(2)*samplerate)), 1, 'last');
+rmevt_epoch = setdiff(1:length(eTYP), firstevt:lastevt);
+
+rm_evtidx = union(rmevt_refractory, rmevt_epoch);
+disp(['       |- Excluded events index: [' strjoin(compose('%g', rm_evtidx), ' ') ']']);
+ePOS(rm_evtidx) = [];
+eTYP(rm_evtidx) = [];
+
 
 %% Extract trials
 util_bdisp('[proc] + Extracting trials:');
 
 % Extract events
-disp('     |-Extract events');
-evtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], events.TYP);
+disp('     |- Extract events');
+evtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], eTYP);
+eTYP = eTYP(evtidx);
+ePOS = ePOS(evtidx);
 
-evtidx = errp_reduce_events(events, evtidx, time_no_release);
+% Compute delay based on wheelchair velocity
+refvel = 0.2184;
+rmevt_velocity = [];
+disp(['     |- Compute delays based on reference velocity: ' num2str(refvel)]);
+ntrials = length(ePOS);
+delays  = zeros(ntrials, 1);
+for trId = 1:ntrials
+    cstart = ePOS(trId);
+    cstop  = ePOS(trId) + floor(epoch(2)*samplerate);
+    overidx = find(abs(twist.z(cstart:cstop)) >= refvel, 1, 'first');
+    if isempty(overidx) == true
+        rmevt_velocity = cat(1, rmevt_velocity, trId);
+    else
+        delays(trId) = overidx;
+    end
+end
 
-DUR = events.DUR(evtidx);
-TYP = events.TYP(evtidx);
-POS = events.POS(evtidx);
+if with_delay == true
+    ePOS = ePOS + delays;
+end
 
 bagevtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], bagevents.TYP);
 
@@ -72,44 +110,42 @@ POS    = POS + bagDEL;
 bagPOS = bagPOS + bagDEL;
 
 % Extract epochs
-disp(['     |-Extract epochs [' num2str(EpochTime(1)) ' ' num2str(EpochTime(2)) '] seconds']);
-EpochSamples = floor(EpochTime*settings.data.samplerate);
-sepoch       = sum(abs(EpochSamples));
-ntrials      = length(POS);
-T = nan(sepoch, nchannels, ntrials);
-E = nan(sepoch, 1, ntrials);
-velz = nan(sepoch, ntrials);
+disp(['     |- Extract epochs [' strjoin(compose('%g', epoch), ' ') '] seconds']);
+nsamples  = length(epoch(1):1/samplerate:epoch(2));
+ntrials   = length(ePOS);
+T    = nan(nsamples, nchannels, ntrials);
+E    = nan(nsamples, 1, ntrials);
+velz = nan(nsamples, ntrials);
 
 for trId = 1:ntrials
-    cstart = POS(trId) + EpochSamples(1);
-    cstop  = POS(trId) + EpochSamples(2) - 1;
+    cstart = ePOS(trId) + floor(epoch(1)*samplerate);
+    cstop  = ePOS(trId) + floor(epoch(2)*samplerate);
     T(:, :, trId) = eeg(cstart:cstop, :);
     E(:, :, trId) = eog(cstart:cstop, :);
     velz(:, trId) = twist.z(cstart:cstop, :);
 end
 
 % Create label vectors
-disp('     |-Create label vectors');
+disp('     |- Create label vectors');
 
 % Command correct
 Ck = false(ntrials, 1);
-correctindex = TYP == CommandLx | TYP == CommandRx;
+correctindex = eTYP == CommandLx | eTYP == CommandRx;
 Ck(correctindex) = true;
 
 % Command error
 Ek = false(ntrials, 1);
-errorindex = TYP == ErrorLx | TYP == ErrorRx;
+errorindex = eTYP == ErrorLx | eTYP == ErrorRx;
 Ek(errorindex) = true;
 
 %% Plotting
-t = EpochTime(1):1/settings.data.samplerate:EpochTime(2) - 1/settings.data.samplerate;
+t = epoch(1):1/samplerate:epoch(2);
 
 refchannel = {'FCz'};
-[~, refchannelidx] = ismember(upper(refchannel), (settings.data.lchannels));
+[~, refchannelidx] = ismember(upper(refchannel), upper(settings.channels.eeg));
 nrefchannel = length(refchannel);
 
-chanlocs64 = load('chanlocs64.mat');
-chanlocs32 = errp_util_get_chanlocs(settings.data.lchannels, chanlocs64.chanlocs);
+chanlocs = settings.channels.chanlocs;
 
 perc_err = 100*sum(Ek)./(sum(Ek) + sum(Ck));
 
@@ -119,7 +155,6 @@ m_eog_err = squeeze(mean(E(:, :, Ek), 3));
 m_eog_cor = squeeze(mean(E(:, :, Ck), 3));
 
 topowins = [-0.5 -0.25; 0.25 0.5; 0.75 1.0; 1.25 1.5];
-maplimits = [-2 2];
 
 % Figure
 fig = figure;
@@ -135,17 +170,8 @@ velxcorrimgslot = [9 12];
 
 get_slot_layout = @(slot) sort(reshape(((slot-1).*4 + [1 2 3 4]'), 1, length(slot).*4));
 
-% Topoplot error
-for tId = 1:size(topowins, 1)
-    subplot(nrows, ncols, tId);
-    cstart = find(t >= topowins(tId, 1), 1, 'first');
-    cstop  = find(t <= topowins(tId, 2), 1, 'last');
-    topoplot(mean(m_eeg_err(cstart:cstop, :), 1), chanlocs32, 'maplimits', maplimits);
-    title([num2str(topowins(tId, 1)) '-' num2str(topowins(tId, 2))])
-end
-
 % EOG signal
-subplot(nrows, ncols, get_slot_layout(4));
+subplot(nrows, ncols, get_slot_layout(1));
 hold on;
 plot(t, m_eog_cor(:, 1), 'b');
 plot(t, m_eog_err(:, 1), 'r');
@@ -157,20 +183,33 @@ xlim([t(1) t(end)]);
 title(['subject: ' subject ' | channel: EOG | error vs. correct']);
 
 % EEG signal
-subplot(nrows, ncols, get_slot_layout(7));
+subplot(nrows, ncols, get_slot_layout(4));
 plot_errp(t, m_eeg_cor(:, refchannelidx), m_eeg_err(:, refchannelidx));
 plot_vline(0, 'k');
 plot_hline(0, 'k');
 title(['Subject: ' subject ' | channel: ' char(refchannel) ' | error vs. correct']);
 
-% Topoplot correct
+% Topoplot error
+htop = [];
 for tId = 1:size(topowins, 1)
-    subplot(nrows, ncols, tId + 36);
+    subplot(nrows, ncols, 24 + tId);
     cstart = find(t >= topowins(tId, 1), 1, 'first');
     cstop  = find(t <= topowins(tId, 2), 1, 'last');
-    topoplot(mean(m_eeg_cor(cstart:cstop, :), 1), chanlocs32, 'maplimits', maplimits);
-    title([num2str(topowins(tId, 1)) '-' num2str(topowins(tId, 2))])
+    h = topoplot(mean(m_eeg_err(cstart:cstop, :), 1), chanlocs);
+    title([num2str(topowins(tId, 1)) '-' num2str(topowins(tId, 2))]);
+    htop = cat(1, htop, h);
 end
+
+% Topoplot correct
+for tId = 1:size(topowins, 1)
+    subplot(nrows, ncols, 36 + tId);
+    cstart = find(t >= topowins(tId, 1), 1, 'first');
+    cstop  = find(t <= topowins(tId, 2), 1, 'last');
+    h = topoplot(mean(m_eeg_cor(cstart:cstop, :), 1), chanlocs);
+    title([num2str(topowins(tId, 1)) '-' num2str(topowins(tId, 2))])
+    htop = cat(1, htop, h);
+end
+errp_set_clim(htop);
 
 % Imagesc error trials
 subplot(nrows, ncols, get_slot_layout([2 5]));
@@ -222,6 +261,12 @@ plot_vline(0, 'w');
 title(['Subject: ' subject ' | abs angular velocity | correct trials']);
 xlabel('time [s]')
 ylabel('# trial')
+
+figtitle = [subject ' grand average']; 
+if with_delay == true
+    figtitle = [figtitle ' with delay | threshold = ' num2str(refvel) ' m/s'];
+end
+sgtitle(figtitle);
 
 function x= find_over(v, value)
 

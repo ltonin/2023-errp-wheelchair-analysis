@@ -1,20 +1,19 @@
 clearvars; clc;
 
-subject = 'e6';
-
+subject = 'e10';
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 depthlevel  = 2;
 
-artifactrej   = 'amica';
 spatialfilter = 'car';
-datapath      = ['analysis/' artifactrej '/' spatialfilter '/cleaned/'];
-savedir       = ['analysis/' artifactrej '/' spatialfilter '/bandpass/'];
-eeg_channels  = {'FP1', 'FP2', 'FZ', 'FC5', 'FC1', 'FC2', 'FC6', 'C3', 'CZ', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P3',  'Pz',  'P4', ...
-                 'F1',  'F2', 'FC3', 'FCZ', 'FC4',  'C5',  'C1',  'C2',  'C6', 'CP3', 'CP4',  'P5',  'P1',  'P2',  'P6'};
-eog_channels  = {'EOG'};
-filtorder     = 3;
-bands         = [2 8];
+eegchannels    = {'FP1', 'FP2', 'F1', 'FZ', 'F2', 'FC1', 'FCz', 'FC2', 'C1', 'CZ', 'C2', 'CP1', 'CP2'};
+
+datapath   = ['analysis/amica/cleaned/' num2str(length(eegchannels)) '/'];
+savedir    = ['analysis/amica/' spatialfilter '/bandpass/' num2str(length(eegchannels)) '/'];
+
+%% Processing parameters
+filter.order = 3;
+filter.bands = [2 8];
 
 %% Get datafiles
 files = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
@@ -29,10 +28,6 @@ end
 %% Create directory
 util_mkdir(pwd, savedir);
 
-%% Get data files
-files  = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
-nfiles = length(files);
-
 for fId = 1:nfiles
 
     cfullname = files{fId};
@@ -42,31 +37,37 @@ for fId = 1:nfiles
     disp(['     |-File: ' cfullname]);
     
     data = load(cfullname);
-
-    s          = double(data.s);
+    
+    eeg        = double(data.eeg);
     eog        = double(data.eog);
-    events     = data.events;
-    settings   = data.settings;
-    samplerate = data.settings.data.samplerate;
+    events     = data.settings.events;
+    samplerate = data.settings.samplerate;
 
     %% Processing data
     util_bdisp('[proc] + Processing the data');
-
-    disp(['       |-Bandpass filter order ' num2str(filtorder) ': [' num2str(bands(1)) ' ' num2str(bands(2)) '] Hz']);
+    disp(['       |- Bandpass filter order ' num2str(filter.order) ': [' strjoin(compose('%g', filter.bands), ' ') '] Hz']);
    
-    
     % Compute bandpass filters
-    s_bp   = filt_bp(s, filtorder, bands, samplerate);
-    eog_bp = filt_bp(eog, filtorder, bands, samplerate);
+    eeg_bp = filt_bp(eeg, filter.order, filter.bands, samplerate);
+    eog_bp = filt_bp(eog, filter.order, filter.bands, samplerate);
     
-    P = s_bp;
-    E = eog_bp;
+    %% Storing data and information
+    cinfo = errp_util_get_info(cfullname);
 
-    settings.bandpass.order = filtorder;
-    settings.bandpass.bands = bands;
+    settings                = data.settings;
+    settings.filter         = filter;
+    settings.task.name      = cinfo.task;
+    settings.device.name    = cinfo.extra1;
+    settings.control.name   = cinfo.extra2;
+    settings.control.legend = {'discrete', 'continuous', 'unknown'};
+    settings.info           = cinfo;
 
+    eeg = eeg_bp;
+    eog = eog_bp;
+
+    %% Saving bandpassed data
     sfilename = fullfile(savedir, [cfilename '.mat']);
     util_bdisp(['[out] - Saving bandpass in: ' sfilename]);
-    save(sfilename, 'P', 'E', 'events', 'settings'); 
+    save(sfilename, 'eeg', 'eog', 'settings'); 
 
 end
