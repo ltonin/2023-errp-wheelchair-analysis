@@ -1,21 +1,21 @@
 clearvars; clc;
 
-subject = 'd6';
+subject = 'd7';
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 spatialfilter = 'car';
-artifactrej   = 'none'; % {'FORCe', 'none'}
+artifactrej   = 'n  one'; % {'FORCe', 'none'}
 
-with_delay    = true;
+with_delay    = false;
+plot_eog      = false;
 
 eegchannels   = {'FP1', 'FP2', 'F1', 'FZ', 'F2', 'FC1', 'FCz', 'FC2', 'C1', 'CZ', 'C2', 'CP1', 'CP2'};
 
-datapath      = ['analysis/' artifactrej '/' spatialfilter '/bandpass/'];
+datapath      = ['analysis/' artifactrej '/' spatialfilter '/bandpass/' num2str(length(eegchannels)) '/'];
 bagspath      = 'analysis/bags/aligned/';
 
 datafiles = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
 bagsfiles = util_getfile3(bagspath, '.mat', 'include', includepat, 'exclude', excludepat);
-
 ndatafiles = length(datafiles);
 util_bdisp(['[io] - Found ' num2str(ndatafiles) ' data files with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') ')']);
 
@@ -92,22 +92,6 @@ end
 if with_delay == true
     ePOS = ePOS + delays;
 end
-
-bagevtidx = errp_util_get_event_type([CommandLx CommandRx ErrorLx ErrorRx NoReleaseFx NoReleaseRx NoReleaseLx], bagevents.TYP);
-
-bagevtidx = errp_reduce_events(bagevents, bagevtidx, time_no_release);
-
-bagERR = bagevents.ERR(bagevtidx);
-bagTYP = bagevents.TYP(bagevtidx);
-bagPOS = bagevents.POS(bagevtidx);
-
-% Compute and add the delay
-bagDEL = errp_compute_delay(twist.z, bagPOS, compensation);
-
-plot_delay(twist.z, bagPOS, bagDEL, true)
-
-POS    = POS + bagDEL;
-bagPOS = bagPOS + bagDEL;
 
 % Extract epochs
 disp(['     |- Extract epochs [' strjoin(compose('%g', epoch), ' ') '] seconds']);
@@ -189,6 +173,16 @@ plot_vline(0, 'k');
 plot_hline(0, 'k');
 title(['Subject: ' subject ' | channel: ' char(refchannel) ' | error vs. correct']);
 
+% Setup plotting
+signal_to_plot = T;
+ref_to_plot    = refchannelidx;
+ref_name = refchannel;
+if plot_eog
+    signal_to_plot = E;
+    ref_to_plot    = 1;
+    ref_name       = 'EOG';
+end
+
 % Topoplot error
 htop = [];
 for tId = 1:size(topowins, 1)
@@ -213,19 +207,19 @@ errp_set_clim(htop);
 
 % Imagesc error trials
 subplot(nrows, ncols, get_slot_layout([2 5]));
-imagesc(t, 1:sum(Ek), squeeze(T(:, refchannelidx, Ek))', [-15 15]);
+imagesc(t, 1:sum(Ek), squeeze(signal_to_plot(:, ref_to_plot, Ek))', [-15 15]);
 plot_vline(0, 'k');
 set(gca, 'YDir', 'normal');
-title(['Subject: ' subject ' | channel: ' char(refchannel) ' | error trials']);
+title(['Subject: ' subject ' | channel: ' char(ref_name) ' | error trials']);
 xlabel('time [s]')
 ylabel('# trial')
 
 % Imagesc correct trials
 subplot(nrows, ncols, get_slot_layout([8 11]));
-imagesc(t, 1:sum(Ck), squeeze(T(:, refchannelidx, Ck))', [-15 15]);
+imagesc(t, 1:sum(Ck), squeeze(signal_to_plot(:, ref_to_plot, Ck))', [-15 15]);
 plot_vline(0, 'k');
 set(gca, 'YDir', 'normal');
-title(['Subject: ' subject ' | channel: ' char(refchannel) ' | correct trials']);
+title(['Subject: ' subject ' | channel: ' char(ref_name) ' | correct trials']);
 xlabel('time [s]')
 ylabel('# trial')
 
