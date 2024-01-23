@@ -4,8 +4,8 @@ function [F, E, events, labels, settings] = errp_concatenate_bandpass(files)
     nfiles = length(files);
     
     % Getting size info to allocate memory and speedup the concatenation
-    eegsize      = get_data_size(files, 'P');
-    eogsize      = get_data_size(files, 'E');
+    eegsize      = get_data_size(files, 'eeg');
+    eogsize      = get_data_size(files, 'eog');
     eegnsamples  = sum(eegsize(1, :));
     eegnchannels = unique(eegsize(2, :));
     eognchannels = unique(eogsize(2, :));
@@ -86,13 +86,13 @@ function [F, E, events, labels, settings] = errp_concatenate_bandpass(files)
         Sk(cstart:cstop) = currsubjId; 
 
         % Concatenate events
-        TYP = cat(1, TYP, cdata.events.TYP);
-        DUR = cat(1, DUR, cdata.events.DUR);
-        POS = cat(1, POS, cdata.events.POS + fileseek - 1);
+        TYP = cat(1, TYP, cdata.settings.events.TYP);
+        DUR = cat(1, DUR, cdata.settings.events.DUR);
+        POS = cat(1, POS, cdata.settings.events.POS + fileseek - 1);
 
         % Concatenate data
-        F(cstart:cstop, :) = cdata.P;
-        E(cstart:cstop, :) = cdata.E;
+        F(cstart:cstop, :) = cdata.eeg;
+        E(cstart:cstop, :) = cdata.eog;
         
         % Save the current settings, remove number of sample and filename,
         % and compare it with the previous settings. If different, it

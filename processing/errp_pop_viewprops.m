@@ -228,10 +228,6 @@ for ri = chanorcomp
         end
 		axis square;
         
-        % Checkbox
-        chkbox = uicontrol('Style','checkbox','String','', 'Units','Normalized', 'Position',...
-                           [X+10 Y+sizewy sizewx*0.2 sizewy*0.18].*s+q);
-        set(chkbox, 'callback', {@get_component_idx, ri});
 
 
 		% plot the button
@@ -242,6 +238,12 @@ for ri = chanorcomp
 		button = uicontrol(gcf, 'Style', 'pushbutton', 'Units','Normalized', 'Position',...
                            [X Y+sizewy sizewx*0.7 sizewy*0.18].*s+q, 'tag', ['comp' num2str(ri)]);
 		set( button, 'callback', {@pop_prop_extended, EEG, typecomp, ri, NaN, spec_opt, erp_opt, scroll_event, classifier_name} );
+        
+		% plot the checkbox
+		% -----------------
+        chkbox = uicontrol('Style','checkbox','String','', 'Units','Normalized', 'Position',...
+                           [X+sizewx*0.8 Y+sizewy sizewx*0.2 sizewy*0.18].*s+q);
+        set(chkbox, 'callback', {@get_component_idx, ri});
 	end;
     if typecomp
         set( button, 'backgroundcolor', COLACC, 'string', EEG.chanlocs(ri).labels); 	

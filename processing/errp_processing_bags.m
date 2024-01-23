@@ -1,6 +1,6 @@
 clearvars; clc;
 
-subject = 'e10';
+subject = 'd6';
 
 includepat  = {subject, 'discrete'};
 excludepat  = {};

@@ -1,95 +1,94 @@
 clearvars; clc;
 
-subject = 'e6';
-
+subject       = 'e10';
 includepat  = {subject, 'discrete'};
 excludepat  = {};
 depthlevel  = 2;
 
-artifactrej   = 'amica';
-spatialfilter = 'car';
-datapath      = ['analysis/' artifactrej '/' spatialfilter '/raw/'];
-savedir       = ['analysis/' artifactrej '/' spatialfilter '/cleaned/'];
-eeg_channels  = {'FP1', 'FP2', 'FZ', 'FC5', 'FC1', 'FC2', 'FC6', 'C3', 'CZ', 'C4', 'CP5', 'CP1', 'CP2', 'CP6', 'P3',  'Pz',  'P4', ...
-                 'F1',  'F2', 'FC3', 'FCZ', 'FC4',  'C5',  'C1',  'C2',  'C6', 'CP3', 'CP4',  'P5',  'P1',  'P2',  'P6'};
-eog_channels  = {'EOG'};
+eegchannels    = {'FP1', 'FP2', 'F1', 'FZ', 'F2', 'FC1', 'FCz', 'FC2', 'C1', 'CZ', 'C2', 'CP1', 'CP2'};
 
-%% Get datafiles
-files = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
+amicapath = ['analysis/amica/components/' num2str(length(eegchannels)) '/'];
+datapath  = ['analysis/amica/preprocessed/' num2str(length(eegchannels)) '/'];
+savedir   = ['analysis/amica/cleaned/' num2str(length(eegchannels)) '/'];
+
+%% Get preprocessed files
+files = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat, 'level', depthlevel);
 
 nfiles = length(files);
 if(nfiles > 0)
-    util_bdisp(['[io] - Found ' num2str(nfiles) ' files with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') '), depth: ' num2str(depthlevel)]);
+    util_bdisp(['[io] - Found ' num2str(nfiles) ' GDF files with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') '), depth: ' num2str(depthlevel)]);
 else
     error(['[io] - No files found with the inclusion/exclusion criteria: (' strjoin(includepat, ', ') ') / (' strjoin(excludepat, ', ') '), depth: ' num2str(depthlevel)]);
+end
+
+%% Get AMICA components
+amicafiles = util_getfile3(amicapath, '.mat', 'include', includepat, 'exclude', excludepat);
+
+if(isequal(length(amicafiles), 1) == false)
+    error(['[io] - Multiple AMICA files for subject ' subject ' and number of channels ' num2str(length(eegchannels))])
+else
+    util_bdisp(['[io] - Found the AMICA file with IC components: ' amicafiles{1}]);
 end
 
 %% Create directory
 util_mkdir(pwd, savedir);
 
 %% AMICA component selection
-files  = util_getfile3(datapath, '.mat', 'include', includepat, 'exclude', excludepat);
-nfiles = length(files);
+util_bdisp('[amica] + Running AMICA selection:');
+disp(['        |- Loading AMICA components from: ' amicafiles{1}]);
+amica = load(amicafiles{1});
+amica = amica.amica;
 
+disp('        |- Select components to remove');
+amica.icaact = geticaact(amica);
+amica        = iclabel(amica);
+[~, rmcomps]     = errp_pop_viewprops(amica, 0);
+disp(['        |- Components marked to be removed: [' strjoin(compose('%g', rmcomps), ' ') ']']);
+
+%% Remove selected components from each preprocessed file
+util_bdisp('[amica] + Removing selected components from each preprocessed file:');
 for fId = 1:nfiles
 
     cfullname = files{fId};
     [cfilepath, cfilename, cfileext] = fileparts(cfullname);
 
-    util_bdisp(['[io] + Loading amica components ' num2str(fId) '/' num2str(nfiles)]);
-    disp(['     |-File: ' cfullname]);
+    %% Loading data
+    disp(['        |- Loading file: ' cfullname]);
     
-    amica = load(cfullname);
-
-    util_bdisp('[amica] + Running component selection');
-    eeg        = amica.eeg;
-    eeg.icaact = geticaact(eeg);
-    eeg        = iclabel(eeg);
-    [~, rmcomps] = errp_pop_viewprops(eeg, 0);
+    data = load(cfullname);
     
-    util_bdisp('[amica] + Removing selected components');
+    disp('        |- Create eeglab structure');
+    eeg            = eeg_emptyset;
+    eeg.data       = data.eeg';
+    eeg.srate      = data.settings.samplerate;
+    eeg.nbchan     = size(eeg.data, 1);
+    eeg.trials     = 1;
+    eeg.pnts       = size(eeg.data, 2);
+    eeg.chanlocs   = amica.chanlocs;
+    eeg.icaweights = amica.icaweights;
+    eeg.icasphere  = amica.icasphere;
+    eeg.icawinv    = amica.icawinv;
+    
+    disp('        |- Check coerence of the structure');
+    eeg = eeg_checkset(eeg, 'ica');
+    
+    disp('        |- Removing selected components');
     eeg = pop_subcomp(eeg, rmcomps);
     eeg.etc.removed_comps = rmcomps;
-    
-    s   = eeg.data';
-    eog = amica.eog;
 
-    %% Get information from filename
-    util_bdisp('[proc] + Getting file information');
-    cinfo = errp_util_get_info(cfullname);
+    %% Storing data and settings
+    settings = data.settings;
+    settings.amica.icaweights  = amica.icaweights;
+    settings.amica.icasphere   = amica.icasphere;
+    settings.amica.icawinv     = amica.icawinv;
+    settings.amica.removed     = rmcomps;
+    settings.channels.chanlocs =  amica.chanlocs;
 
-    % Extracting events
-    disp('       |-Extract events');
-    cevents    = amica.h.EVENT;
-    events.TYP = cevents.TYP;
-    events.POS = cevents.POS;
-    events.DUR = cevents.DUR;
-    
-    % Task
-    disp('       |-Extract task info');
-    task = cinfo.task;
-    
-    % Extra
-    disp('       |-Extract extra info');
-    device  = cinfo.extra1;
-    control = cinfo.extra2;
-    
-    %% Create settings structure
-    settings.data.filename          = cfullname;
-    settings.data.nsamples          = size(s, 1);
-    settings.data.nchannels         = size(s, 2);
-    settings.data.lchannels         = eeg_channels;
-    settings.data.samplerate        = amica.h.SampleRate;
-    settings.artifact.name          = artifactrej;
-    settings.spatial.filter         = spatialfilter;
-    settings.task.name              = task;
-    settings.device.name            = device;
-    settings.control.name           = control;
-    settings.control.legend         = {'discrete', 'continuous', 'unknown'};
-    settings.info                   = cinfo;
-
+    eeg = eeg.data';
+    eog = data.eog;
+        
     %% Save cleaned data
     sfilename = fullfile(savedir, [cfilename '.mat']);
     util_bdisp(['[out] - Saving cleaned data in: ' sfilename]);
-    save(sfilename, 's', 'eog', 'events', 'settings'); 
+    save(sfilename, 'eeg', 'eog', 'settings'); 
 end
